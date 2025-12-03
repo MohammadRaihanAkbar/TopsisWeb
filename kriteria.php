@@ -2,152 +2,278 @@
 session_start();
 include 'db.php';
 
+$error = "";
+
+// Pastikan alternatif sudah ada
 if (!isset($_SESSION['alternatif']) || count($_SESSION['alternatif']) == 0) {
-    header("Location: alternatif.php");
-    exit;
+  header("Location: alternatif.php");
+  exit;
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['kriteria'])) {
-    $kriteria = array_values(array_filter(array_map('trim', $_POST['kriteria']), fn($v)=>$v!==''));    
-    $bobot = array_map('floatval', $_POST['bobot']);
-    $tipe  = $_POST['tipe'];
+  $kriteria = array_values(array_filter(array_map('trim', (array)$_POST['kriteria']), fn($v)=>$v!==''));
+  $bobot_raw = (array)($_POST['bobot'] ?? []);
+  $tipe_raw  = (array)($_POST['tipe'] ?? []);
 
-    if (count($kriteria) == 0) {
-        $error = "Masukkan minimal 1 kriteria.";
-    } else {
+  // bobot float & default
+  $bobot = [];
+  foreach ($bobot_raw as $x) $bobot[] = (float)$x;
 
-        $_SESSION['kriteria'] = $kriteria;
-        $_SESSION['bobot'] = $bobot;
-        $_SESSION['tipe'] = $tipe;
+  // tipe: pastiin ada benefit/cost sesuai index
+  $tipe = [];
+  foreach ($kriteria as $i => $_) {
+    $t = $tipe_raw[$i] ?? 'benefit';
+    $tipe[$i] = ($t === 'cost') ? 'cost' : 'benefit';
+  }
 
-        mysqli_query($conn, "DELETE FROM kriteria");
-        mysqli_query($conn, "ALTER TABLE kriteria AUTO_INCREMENT = 1");
-
-        foreach ($kriteria as $i => $nama) {
-            $b = $bobot[$i];
-            $t = $tipe[$i];
-
-            mysqli_query($conn, "
-                INSERT INTO kriteria(nama, bobot, sifat)
-                VALUES(
-                    '".mysqli_real_escape_string($conn, $nama)."',
-                    '$b',
-                    '$t'
-                )
-            ");
-        }
-
-        header("Location: nilai.php");
-        exit;
+  if (count($kriteria) < 1) {
+    $error = "Masukkan minimal 1 kriteria.";
+  } else {
+    // validasi bobot > 0
+    foreach ($kriteria as $i => $nama) {
+      $b = $bobot[$i] ?? 0;
+      if ($b <= 0) {
+        $error = "Bobot untuk Kriteria ".($i+1)." harus lebih dari 0.";
+        break;
+      }
     }
-}
+  }
 
+  if ($error === "") {
+    $_SESSION['kriteria'] = $kriteria;
+    $_SESSION['bobot'] = $bobot;
+    $_SESSION['tipe'] = $tipe;
+
+    mysqli_query($conn, "DELETE FROM kriteria");
+    mysqli_query($conn, "ALTER TABLE kriteria AUTO_INCREMENT = 1");
+
+    // prepared insert
+    $stmt = mysqli_prepare($conn, "INSERT INTO kriteria (nama, bobot, sifat) VALUES (?, ?, ?)");
+    if (!$stmt) {
+      $error = "Gagal menyiapkan query: " . mysqli_error($conn);
+    } else {
+      foreach ($kriteria as $i => $nama) {
+        $b = $bobot[$i];
+        $t = $tipe[$i];
+        mysqli_stmt_bind_param($stmt, "sds", $nama, $b, $t); // s=string, d=double, s=string
+        mysqli_stmt_execute($stmt);
+      }
+      mysqli_stmt_close($stmt);
+
+      header("Location: nilai.php");
+      exit;
+    }
+  }
+}
 ?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
-<meta charset="UTF-8">
-<title>Kriteria - TOPSIS</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8">
+  <title>Kriteria - TOPSIS</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 </head>
 
 <body>
-<div class="site-overlay">
+<div class="page">
 
-<nav class="navbar navbar-expand-lg">
-  <div class="container container-narrow">
-    <a class="navbar-brand" href="index.php">
-      <i class="fa-solid fa-chart-simple icon"></i>SPK TOPSIS
-    </a>
-  </div>
-</nav>
+  <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm sticky-top">
+    <div class="container container-narrow">
+      <a class="navbar-brand fw-bold d-flex align-items-center gap-2" href="index.php">
+        <span class="logo-pill"><i class="fa-solid fa-chart-simple"></i></span>
+        <span>SPK TOPSIS</span>
+      </a>
+    </div>
+  </nav>
 
-<div class="container container-narrow" style="margin-top:110px">
-  <div class="card-clean">
+  <main class="container container-narrow" style="padding: 44px 0 70px;">
+    <div class="mb-4 d-flex align-items-center justify-content-between flex-wrap gap-3">
+      <div>
+        <h2 class="fw-bold mb-1">Kriteria & Bobot</h2>
+        <div class="text-muted">Masukkan kriteria penilaian, bobot, dan tipe (benefit/cost).</div>
+      </div>
 
-    <div class="text-center mb-3">
-      <span class="step active">3</span>
-      <span class="ms-3">Kriteria</span>
+      <div class="stepper">
+        <div class="stepper-item done">
+          <span class="bubble"><i class="fa-solid fa-check"></i></span>
+          <span class="label">Info</span>
+        </div>
+        <div class="stepper-line"></div>
+
+        <div class="stepper-item done">
+          <span class="bubble"><i class="fa-solid fa-check"></i></span>
+          <span class="label">Alt</span>
+        </div>
+        <div class="stepper-line"></div>
+
+        <div class="stepper-item active">
+          <span class="bubble">3</span>
+          <span class="label">Kriteria</span>
+        </div>
+        <div class="stepper-line"></div>
+
+        <div class="stepper-item">
+          <span class="bubble">4</span>
+          <span class="label">Nilai</span>
+        </div>
+      </div>
     </div>
 
-    <h3 class="fw-bold">
-      <i class="fa-solid fa-sliders icon"></i>
-      Kriteria dan Bobot
-    </h3>
-    <p class="text-muted">Masukkan kriteria penilaian.</p>
-
     <?php if (!empty($error)): ?>
-      <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
+      <div class="alert alert-danger mb-3"><?= htmlspecialchars($error) ?></div>
     <?php endif; ?>
 
-    <form method="POST">
+    <div class="row g-4">
+      <div class="col-lg-8">
+        <div class="cardx">
+          <form method="POST" id="formKriteria">
+            <div id="containerKriteria">
+              <!-- item 1 -->
+              <div class="kri-item mb-3" data-index="0">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                  <div class="fw-bold">Kriteria 1</div>
+                  <button type="button" class="btn btn-outline-danger btn-sm kri-remove d-none" title="Hapus">
+                    <i class="fa-solid fa-trash"></i>
+                  </button>
+                </div>
 
-      <div id="containerKriteria">
-        <div class="border p-3 rounded mb-3 bg-white">
-          <label class="form-label">Kriteria 1</label>
-          <input type="text" name="kriteria[]" class="form-control mb-2" placeholder="Contoh: Harga" required>
+                <div class="mb-2">
+                  <label class="form-label fw-semibold">Nama Kriteria</label>
+                  <input type="text" name="kriteria[]" class="form-control form-control-lg" placeholder="Contoh: Harga" required>
+                </div>
 
-          <label class="form-label">Bobot</label>
-          <input type="number" step="any" name="bobot[]" class="form-control mb-2" value="1" required>
+                <div class="mb-2">
+                  <label class="form-label fw-semibold">Bobot</label>
+                  <input type="number" step="any" min="0.0001" name="bobot[]" class="form-control form-control-lg" value="1" required>
+                  <div class="form-text">Boleh desimal. Minimal &gt; 0.</div>
+                </div>
 
-          <label class="form-label">Tipe Kriteria</label>
-          <div class="d-flex gap-3 mb-2">
-            <div class="form-check">
-              <input class="form-check-input" type="radio" name="tipe[0]" value="benefit" checked>
-              <label class="form-check-label">Benefit</label>
+                <div>
+                  <label class="form-label fw-semibold">Tipe Kriteria</label>
+                  <div class="d-flex gap-3 flex-wrap">
+                    <label class="form-check d-flex align-items-center gap-2">
+                      <input class="form-check-input" type="radio" name="tipe[0]" value="benefit" checked>
+                      <span class="form-check-label">Benefit</span>
+                    </label>
+                    <label class="form-check d-flex align-items-center gap-2">
+                      <input class="form-check-input" type="radio" name="tipe[0]" value="cost">
+                      <span class="form-check-label">Cost</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div class="form-check">
-              <input class="form-check-input" type="radio" name="tipe[0]" value="cost">
-              <label class="form-check-label">Cost</label>
+
+            <button type="button" class="btn btn-outline-primary btn-sm" id="btnTambahKriteria">
+              <i class="fa-solid fa-plus me-1"></i>Tambah Kriteria
+            </button>
+
+            <div class="d-flex justify-content-between mt-4">
+              <a href="alternatif.php" class="btn btn-outline-secondary">
+                <i class="fa-solid fa-arrow-left me-2"></i>Kembali
+              </a>
+              <button type="submit" class="btn btn-primary px-4">
+                Lanjut <i class="fa-solid fa-arrow-right ms-2"></i>
+              </button>
             </div>
-          </div>
+          </form>
         </div>
       </div>
 
-      <button type="button" class="btn btn-outline-primary btn-sm mb-3" onclick="tambahKriteria()">
-        <i class="fa-solid fa-plus me-1"></i>Tambah Kriteria
-      </button>
-
-      <div class="d-flex justify-content-between">
-        <a href="alternatif.php" class="btn btn-secondary">
-          <i class="fa-solid fa-arrow-left me-2"></i>Kembali
-        </a>
-        <button type="submit" class="btn btn-primary">
-          <i class="fa-solid fa-arrow-right me-2"></i>Lanjut
-        </button>
+      <div class="col-lg-4">
+        <div class="cardx">
+          <div class="fw-bold mb-2">
+            <i class="fa-solid fa-scale-balanced me-2" style="color: var(--p1);"></i>Tips bobot
+          </div>
+          <ul class="text-muted mb-0" style="padding-left: 18px; line-height: 1.7;">
+            <li>Bobot lebih besar = lebih penting.</li>
+            <li>Benefit: semakin besar semakin baik.</li>
+            <li>Cost: semakin kecil semakin baik (contoh: harga, jarak).</li>
+          </ul>
+        </div>
       </div>
+    </div>
 
-    </form>
-
-  </div>
-</div>
-
+  </main>
 </div>
 
 <script>
 let kriCount = 1;
-function tambahKriteria(){
-  const i = kriCount;
-  const div = document.createElement('div');
-  div.className = 'border p-3 rounded mb-3 bg-white';
-  div.innerHTML = `
-    <label class="form-label">Kriteria ${i+1}</label>
-    <input type="text" name="kriteria[]" class="form-control mb-2" required>
-    <label class="form-label">Bobot</label>
-    <input type="number" step="any" name="bobot[]" class="form-control mb-2" value="1" required>
-    <label class="form-label">Tipe Kriteria</label>
-    <div class="d-flex gap-3 mb-2">
-      <div class="form-check"><input class="form-check-input" type="radio" name="tipe[${i}]" value="benefit" checked><label class="form-check-label">Benefit</label></div>
-      <div class="form-check"><input class="form-check-input" type="radio" name="tipe[${i}]" value="cost"><label class="form-check-label">Cost</label></div>
+
+function refreshKriteriaLabels(){
+  const items = document.querySelectorAll('#containerKriteria .kri-item');
+  items.forEach((item, idx) => {
+    item.dataset.index = idx;
+    item.querySelector('.fw-bold').textContent = `Kriteria ${idx + 1}`;
+
+    // update name radio supaya tidak bentrok
+    const radios = item.querySelectorAll('input[type="radio"]');
+    radios.forEach(r => {
+      r.name = `tipe[${idx}]`;
+    });
+
+    // tombol hapus: tampil kalau item > 1
+    const btnRemove = item.querySelector('.kri-remove');
+    btnRemove.classList.toggle('d-none', items.length === 1);
+  });
+}
+
+document.getElementById('btnTambahKriteria').addEventListener('click', () => {
+  const idx = kriCount;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'kri-item mb-3';
+  wrap.dataset.index = idx;
+
+  wrap.innerHTML = `
+    <div class="d-flex align-items-center justify-content-between mb-2">
+      <div class="fw-bold">Kriteria ${idx + 1}</div>
+      <button type="button" class="btn btn-outline-danger btn-sm kri-remove" title="Hapus">
+        <i class="fa-solid fa-trash"></i>
+      </button>
+    </div>
+
+    <div class="mb-2">
+      <label class="form-label fw-semibold">Nama Kriteria</label>
+      <input type="text" name="kriteria[]" class="form-control form-control-lg" placeholder="Contoh: Kualitas" required>
+    </div>
+
+    <div class="mb-2">
+      <label class="form-label fw-semibold">Bobot</label>
+      <input type="number" step="any" min="0.0001" name="bobot[]" class="form-control form-control-lg" value="1" required>
+    </div>
+
+    <div>
+      <label class="form-label fw-semibold">Tipe Kriteria</label>
+      <div class="d-flex gap-3 flex-wrap">
+        <label class="form-check d-flex align-items-center gap-2">
+          <input class="form-check-input" type="radio" name="tipe[${idx}]" value="benefit" checked>
+          <span class="form-check-label">Benefit</span>
+        </label>
+        <label class="form-check d-flex align-items-center gap-2">
+          <input class="form-check-input" type="radio" name="tipe[${idx}]" value="cost">
+          <span class="form-check-label">Cost</span>
+        </label>
+      </div>
     </div>
   `;
-  document.getElementById('containerKriteria').appendChild(div);
+
+  wrap.querySelector('.kri-remove').addEventListener('click', () => {
+    wrap.remove();
+    refreshKriteriaLabels();
+  });
+
+  document.getElementById('containerKriteria').appendChild(wrap);
   kriCount++;
-}
+  refreshKriteriaLabels();
+});
+
+// aktifkan tombol hapus kalau > 1
+refreshKriteriaLabels();
 </script>
 
 </body>
